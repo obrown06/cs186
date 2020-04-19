@@ -136,10 +136,8 @@ public class BPlusTree {
      */
     public Optional<RecordId> get(DataBox key) {
         typecheck(key);
-        // TODO(proj2): implement
         // TODO(proj4_part3): B+ tree locking
-
-        return Optional.empty();
+        return root.get(key).getKey(key);
     }
 
     /**
@@ -189,10 +187,8 @@ public class BPlusTree {
      * memory will receive 0 points.
      */
     public Iterator<RecordId> scanAll() {
-        // TODO(proj2): Return a BPlusTreeIterator.
-        // TODO(proj4_part3): B+ tree locking
-
-        return Collections.emptyIterator();
+        BPlusTreeIterator iter = new BPlusTreeIterator();
+        return iter;
     }
 
     /**
@@ -220,10 +216,10 @@ public class BPlusTree {
      */
     public Iterator<RecordId> scanGreaterEqual(DataBox key) {
         typecheck(key);
-        // TODO(proj2): Return a BPlusTreeIterator.
-        // TODO(proj4_part3): B+ tree locking
+        LeafNode leaf = root.get(key);
+        Iterator<RecordId> iter = leaf.scanGreaterEqual(key);
 
-        return Collections.emptyIterator();
+        return new BPlusTreeIterator(leaf, iter);
     }
 
     /**
@@ -237,10 +233,18 @@ public class BPlusTree {
      */
     public void put(DataBox key, RecordId rid) {
         typecheck(key);
-        // TODO(proj2): implement
         // TODO(proj4_part3): B+ tree locking
 
-        return;
+        Optional<Pair<DataBox, Long>> splitKey = root.put(key, rid);
+        if (splitKey.isPresent()) {
+          List<DataBox> keys = new ArrayList<>();
+          keys.add(splitKey.get().getFirst());
+          List<Long> children = new ArrayList<>();
+          children.add(root.getPage().getPageNum());
+          children.add(splitKey.get().getSecond());
+          this.updateRoot(new InnerNode(metadata, bufferManager, keys,
+                   children, lockContext));
+        }
     }
 
     /**
@@ -261,10 +265,19 @@ public class BPlusTree {
      * bulkLoad (see comments in BPlusNode.bulkLoad).
      */
     public void bulkLoad(Iterator<Pair<DataBox, RecordId>> data, float fillFactor) {
-        // TODO(proj2): implement
         // TODO(proj4_part3): B+ tree locking
-
-        return;
+        while (data.hasNext()) {
+          Optional<Pair<DataBox, Long>> loadResult = this.root.bulkLoad(data, fillFactor);
+          if (loadResult.isPresent()) {
+            List<DataBox> newKeys = new ArrayList<>();
+            List<Long> newChildren = new ArrayList<>();
+            newKeys.add(loadResult.get().getFirst());
+            newChildren.add(root.getPage().getPageNum());
+            newChildren.add(loadResult.get().getSecond());
+            this.updateRoot(new InnerNode(metadata, bufferManager, newKeys,
+                     newChildren, lockContext));
+          }
+        }
     }
 
     /**
@@ -280,10 +293,8 @@ public class BPlusTree {
      */
     public void remove(DataBox key) {
         typecheck(key);
-        // TODO(proj2): implement
         // TODO(proj4_part3): B+ tree locking
-
-        return;
+        root.remove(key);
     }
 
     // Helpers /////////////////////////////////////////////////////////////////
@@ -384,20 +395,32 @@ public class BPlusTree {
 
     // Iterator ////////////////////////////////////////////////////////////////
     private class BPlusTreeIterator implements Iterator<RecordId> {
-        // TODO(proj2): Add whatever fields and constructors you want here.
+      private Iterator<RecordId> iter;
+      private LeafNode leaf;
 
-        @Override
-        public boolean hasNext() {
-            // TODO(proj2): implement
+      public BPlusTreeIterator() {
+        this(root.getLeftmostLeaf(), null);
+      }
 
-            return false;
+      public BPlusTreeIterator(LeafNode leaf, Iterator<RecordId> iter) {
+        this.leaf = leaf;
+        this.iter = iter == null ? leaf.scanAll() : iter;
+      }
+
+      @Override
+      public boolean hasNext() {
+        return iter.hasNext() || leaf.getRightSibling().isPresent();
+      }
+
+      @Override
+      public RecordId next() {
+        if (iter.hasNext()) {
+          return iter.next();
+        } else {
+          leaf = leaf.getRightSibling().get();
+          iter = leaf.scanAll();
+          return next();
         }
-
-        @Override
-        public RecordId next() {
-            // TODO(proj2): implement
-
-            throw new NoSuchElementException();
-        }
+      }
     }
 }
