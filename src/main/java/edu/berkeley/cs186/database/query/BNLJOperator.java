@@ -3,6 +3,7 @@ package edu.berkeley.cs186.database.query;
 import java.util.*;
 
 import edu.berkeley.cs186.database.TransactionContext;
+import edu.berkeley.cs186.database.common.iterator.ArrayBacktrackingIterator;
 import edu.berkeley.cs186.database.common.iterator.BacktrackingIterator;
 import edu.berkeley.cs186.database.databox.DataBox;
 import edu.berkeley.cs186.database.memory.Page;
@@ -67,10 +68,12 @@ class BNLJOperator extends JoinOperator {
 
             this.leftIterator = BNLJOperator.this.getPageIterator(this.getLeftTableName());
             fetchNextLeftBlock();
+            System.out.println("Fetched left block");
 
             this.rightIterator = BNLJOperator.this.getPageIterator(this.getRightTableName());
             this.rightIterator.markNext();
             fetchNextRightPage();
+            System.out.println("Fetched right page");
 
             try {
                 this.fetchNextRecord();
@@ -88,7 +91,16 @@ class BNLJOperator extends JoinOperator {
          * and leftRecord should be set to null.
          */
         private void fetchNextLeftBlock() {
-            // TODO(proj3_part1): implement
+          while (leftIterator.hasNext()) {
+            leftRecordIterator = BNLJOperator.this.getBlockIterator(this.getLeftTableName(), this.leftIterator, BNLJOperator.this.numBuffers - 2);
+            if (leftRecordIterator.hasNext()) {
+              leftRecordIterator.markNext();
+              leftRecord = leftRecordIterator.next();
+              return;
+            }
+          }
+          leftRecordIterator = null;
+          leftRecord = null;
         }
 
         /**
@@ -100,7 +112,11 @@ class BNLJOperator extends JoinOperator {
          * should be set to null.
          */
         private void fetchNextRightPage() {
-            // TODO(proj3_part1): implement
+          if (!rightIterator.hasNext()) {
+            rightIterator.reset();
+          }
+          this.rightRecordIterator = BNLJOperator.this.getBlockIterator(this.getRightTableName(), this.rightIterator, 1);
+          rightRecordIterator.markNext();
         }
 
         /**
@@ -110,7 +126,48 @@ class BNLJOperator extends JoinOperator {
          * @throws NoSuchElementException if there are no more Records to yield
          */
         private void fetchNextRecord() {
-            // TODO(proj3_part1): implement
+          if (leftRecord == null) {
+            throw new NoSuchElementException("No more Records to yield!");
+          }
+          this.nextRecord = null;
+
+          // The invariants of this loop are:
+          //   Invariant 1: nextRecord == null
+          //   Invariant 2: leftRecord != null
+          while (!hasNext()) {
+            if (rightRecordIterator.hasNext()) {
+              // From Invariant 1, we know leftRecord != null.
+              // The if condition guarantees we have a rightRecord, so we can
+              // confidently extract that record and perform the join.
+              Record rightRecord = rightRecordIterator.next();
+              DataBox leftJoinValue = leftRecord.getValues().get(BNLJOperator.this.getLeftColumnIndex());
+              DataBox rightJoinValue = rightRecord.getValues().get(BNLJOperator.this.getRightColumnIndex());
+              if (leftJoinValue.equals(rightJoinValue)) {
+                // If the join succeeds, we will exist the loop (hasNext() will return true)
+                this.nextRecord = joinRecords(this.leftRecord, rightRecord);
+              }
+            } else if (leftRecordIterator.hasNext()) {
+              // This means we've finished the innermost loop (over elems in the right relation)
+              // In this case, we should increment the left iterator and reset the right counter.
+              rightRecordIterator.reset();
+              leftRecord = leftRecordIterator.next();
+            } else if (rightIterator.hasNext()) {
+              // This means we've finished both record loops (over elems in left + right relations).
+              // In this case, we should get the next right page and reset the left iterator.
+              fetchNextRightPage();
+              leftRecordIterator.reset();
+              leftRecord = leftRecordIterator.next();
+            } else {
+              // This means we've finished joining all of the records in the right relation with
+              // all of the records in the current block.
+              // This means we need to get the next block.
+              fetchNextLeftBlock();
+              if (leftRecordIterator == null) {
+                throw new NoSuchElementException("No more Records to yield!");
+              }
+              fetchNextRightPage();
+            }
+          }
         }
 
         /**

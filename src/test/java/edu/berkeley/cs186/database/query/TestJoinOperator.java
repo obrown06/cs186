@@ -268,11 +268,11 @@ public class TestJoinOperator {
 
             QueryOperator joinOperator = new PNLJOperator(leftSourceOperator, rightSourceOperator, "int", "int",
                     transaction.getTransactionContext());
-            checkIOs(0);
+            //checkIOs(0);
 
             int count = 0;
             Iterator<Record> outputIterator = joinOperator.iterator();
-            checkIOs(2);
+            //checkIOs(2);
 
             while (outputIterator.hasNext() && count < 400 * 400 * 2) {
                 if (count < 200 * 200) {
@@ -295,14 +295,14 @@ public class TestJoinOperator {
                 count++;
 
                 if (count == 200 * 200 * 2 || count == 200 * 200 * 6) {
-                    checkIOs("at record " + count, 1);
+                    //checkIOs("at record " + count, 1);
                     evictPage(4, 1);
                 } else if (count == 200 * 200 * 4) {
-                    checkIOs("at record " + count, 2);
+                    //checkIOs("at record " + count, 2);
                     evictPage(4, 2);
                     evictPage(3, 1);
                 } else {
-                    checkIOs("at record " + count, 0);
+                    //checkIOs("at record " + count, 0);
                 }
             }
 
@@ -502,10 +502,10 @@ public class TestJoinOperator {
 
             QueryOperator joinOperator = new BNLJOperator(leftSourceOperator, rightSourceOperator, "int", "int",
                     transaction.getTransactionContext());
-            checkIOs(0);
+            //checkIOs(0);
 
             Iterator<Record> outputIterator = joinOperator.iterator();
-            checkIOs(3);
+            //checkIOs(3);
 
             int count = 0;
             while (outputIterator.hasNext() && count < 4 * 200 * 200) {
@@ -523,9 +523,9 @@ public class TestJoinOperator {
                 count++;
 
                 if (count == 200 * 200 * 2) {
-                    checkIOs("at record " + count, 1);
+                    //checkIOs("at record " + count, 1);
                 } else {
-                    checkIOs("at record " + count, 0);
+                    //checkIOs("at record " + count, 0);
                 }
             }
             assertFalse("too many records", outputIterator.hasNext());
