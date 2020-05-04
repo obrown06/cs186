@@ -57,7 +57,7 @@ class SortMergeOperator extends JoinOperator {
 
         private SortMergeIterator() {
             super();
-            // TODO(proj3_part1): implement
+
         }
 
         /**

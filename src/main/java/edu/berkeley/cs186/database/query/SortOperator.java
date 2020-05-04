@@ -71,9 +71,15 @@ public class SortOperator {
      * size of the buffer, but it is done this way for ease.
      */
     public Run sortRun(Run run) {
-        // TODO(proj3_part1): implement
-
-        return null;
+        Iterator<Record> it = run.iterator();
+        List<Record> records = new ArrayList<Record>();
+        while (it.hasNext()) {
+          records.add(it.next());
+        }
+        Collections.sort(records, comparator);
+        Run sortedRun = new IntermediateRun();
+        sortedRun.addRecords(records);
+        return sortedRun;
     }
 
     /**
@@ -86,8 +92,28 @@ public class SortOperator {
      */
     public Run mergeSortedRuns(List<Run> runs) {
         // TODO(proj3_part1): implement
+        List<Iterator<Record>> iterators = new ArrayList<Iterator<Record>>();
 
-        return null;
+        PriorityQueue<Pair<Record, Integer>> minHeap = new PriorityQueue<Pair<Record, Integer>>(new RecordPairComparator());
+        for (int i = 0; i < runs.size(); i++) {
+          Run run = runs.get(i);
+          Iterator<Record> iterator = run.iterator();
+          iterators.add(iterator);
+          if (iterator.hasNext()) {
+            minHeap.add(new Pair<Record, Integer>(iterator.next(), i));
+          }
+        }
+
+        Run mergedRun = new IntermediateRun();
+        while (minHeap.size() > 0) {
+          Pair<Record, Integer> nextPair = minHeap.poll();
+          Iterator<Record> iter = iterators.get(nextPair.getSecond());
+          if (iter.hasNext()) {
+            minHeap.add(new Pair<Record, Integer>(iter.next(), nextPair.getSecond()));
+          }
+          mergedRun.addRecord(nextPair.getFirst().getValues());
+        }
+        return mergedRun;
     }
 
     /**
@@ -98,9 +124,14 @@ public class SortOperator {
      * perfect multiple.
      */
     public List<Run> mergePass(List<Run> runs) {
-        // TODO(proj3_part1): implement
-
-        return Collections.emptyList();
+        int lo = 0, hi = numBuffers - 1;
+        List<Run> mergedSortedRuns = new ArrayList<Run>();
+        while (lo < runs.size()) {
+          mergedSortedRuns.add(mergeSortedRuns(runs.subList(lo, Math.min(runs.size(), hi))));
+          lo += numBuffers - 1;
+          hi += numBuffers - 1;
+        }
+        return mergedSortedRuns;
     }
 
     /**
@@ -109,9 +140,21 @@ public class SortOperator {
      * Returns the name of the table that backs the final run.
      */
     public String sort() {
-        // TODO(proj3_part1): implement
+        Iterator<Page> pageIterator = this.transaction.getPageIterator(tableName);
+        List<Run> sortedRuns = new ArrayList<Run>();
+        BacktrackingIterator<Record> blockIterator;
+        while (pageIterator.hasNext()) {
+          blockIterator = this.transaction.getBlockIterator(tableName, pageIterator, numBuffers);
+          Run run = createRunFromIterator(blockIterator);
+          Run sortedRun = sortRun(run);
+          sortedRuns.add(sortedRun);
+        }
 
-        return this.tableName; // TODO(proj3_part1): replace this!
+        while (sortedRuns.size() > 1) {
+          sortedRuns = mergePass(sortedRuns);
+        }
+
+        return sortedRuns.get(0).tableName();
     }
 
     public Iterator<Record> iterator() {
@@ -209,4 +252,3 @@ public class SortOperator {
         }
     }
 }
-
