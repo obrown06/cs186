@@ -54,10 +54,25 @@ class SortMergeOperator extends JoinOperator {
         private Record nextRecord;
         private Record rightRecord;
         private boolean marked;
+        private LeftRightRecordComparator leftRightComparator;
 
         private SortMergeIterator() {
             super();
-
+            leftRightComparator = new LeftRightRecordComparator();
+            SortOperator leftSortOperator = new SortOperator(SortMergeOperator.this.getTransaction(), this.getLeftTableName(), new LeftRecordComparator());
+            SortOperator rightSortOperator = new SortOperator(SortMergeOperator.this.getTransaction(), this.getRightTableName(), new RightRecordComparator());
+            String sortedLeftTableName = leftSortOperator.sort();
+            String sortedRightTableName = rightSortOperator.sort();
+            leftIterator = SortMergeOperator.this.getRecordIterator(sortedLeftTableName);
+            leftRecord = leftIterator.hasNext() ? leftIterator.next() : null;
+            rightIterator = SortMergeOperator.this.getRecordIterator(sortedRightTableName);
+            rightRecord = rightIterator.hasNext() ? rightIterator.next() : null;
+            marked = false;
+            try {
+              fetchNextRecord();
+            } catch (NoSuchElementException e) {
+                this.nextRecord = null;
+            }
         }
 
         /**
@@ -67,9 +82,35 @@ class SortMergeOperator extends JoinOperator {
          */
         @Override
         public boolean hasNext() {
-            // TODO(proj3_part1): implement
+            return nextRecord != null;
+        }
 
-            return false;
+        private void fetchNextRecord() {
+          this.nextRecord = null;
+          while (!hasNext()) {
+            if (!marked) {
+              if (leftRecord == null) {
+                throw new NoSuchElementException("No new record to fetch");
+              }
+              while (leftRecord != null && leftRightComparator.compare(leftRecord, rightRecord) < 0) {
+                leftRecord = leftIterator.hasNext() ? leftIterator.next() : null;
+              }
+              while (rightRecord != null && leftRightComparator.compare(leftRecord, rightRecord) > 0) {
+                rightRecord = rightIterator.hasNext() ? rightIterator.next() : null;
+              }
+              rightIterator.markPrev();
+              marked = true;
+            }
+            if (rightRecord != null && leftRecord != null && leftRightComparator.compare(leftRecord, rightRecord) == 0) {
+              nextRecord = joinRecords(leftRecord, rightRecord);
+              rightRecord = rightIterator.hasNext() ? rightIterator.next() : null;
+            } else {
+              rightIterator.reset();
+              rightRecord = rightIterator.hasNext() ? rightIterator.next() : null;
+              leftRecord = leftIterator.hasNext() ? leftIterator.next() : null;
+              marked = false;
+            }
+          }
         }
 
         /**
@@ -80,14 +121,37 @@ class SortMergeOperator extends JoinOperator {
          */
         @Override
         public Record next() {
-            // TODO(proj3_part1): implement
-
-            throw new NoSuchElementException();
+            if (!hasNext()) {
+              throw new NoSuchElementException("No more records in table!");
+            }
+            Record nextRecord = this.nextRecord;
+            try {
+              fetchNextRecord();
+            } catch (NoSuchElementException e) {
+                this.nextRecord = null;
+            }
+            return nextRecord;
         }
 
         @Override
         public void remove() {
             throw new UnsupportedOperationException();
+        }
+
+        private Record joinRecords(Record leftRecord, Record rightRecord) {
+            List<DataBox> leftValues = new ArrayList<>(leftRecord.getValues());
+            List<DataBox> rightValues = new ArrayList<>(rightRecord.getValues());
+            leftValues.addAll(rightValues);
+            return new Record(leftValues);
+        }
+
+        private class LeftRightRecordComparator implements Comparator<Record> {
+          @Override
+          public int compare(Record left, Record right) {
+            DataBox leftJoinValue = left.getValues().get(SortMergeOperator.this.getLeftColumnIndex());
+            DataBox rightJoinValue = right.getValues().get(SortMergeOperator.this.getRightColumnIndex());
+            return leftJoinValue.compareTo(rightJoinValue);
+          }
         }
 
         private class LeftRecordComparator implements Comparator<Record> {
