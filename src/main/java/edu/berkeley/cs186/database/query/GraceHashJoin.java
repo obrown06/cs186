@@ -306,9 +306,6 @@ public class GraceHashJoin {
           leftRecords.add(record);
           rightRecords.add(record);
         }
-
-        // TODO(proj3_part1): populate leftRecords and rightRecords such that NHJ breaks but not GHJ
-
         return new Pair<>(leftRecords, rightRecords);
     }
 
