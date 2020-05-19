@@ -226,6 +226,44 @@ public class QueryPlan {
      * @return an iterator of records that is the result of this query
      */
     public Iterator<Record> execute() {
+      Map<Set, QueryOperator> pass1Map = new HashMap<Set, QueryOperator>();
+      Set<String> startSet = new HashSet<String>();
+      String startTableNameReal = aliases.get(startTableName);
+      startSet.add(startTableName);
+      pass1Map.put(startSet, minCostSingleAccess(startTableNameReal));
+
+      for (String table : joinTableNames) {
+        String tableNameReal = aliases.get(table);
+        Set<String> set = new HashSet<String>();
+        set.add(table);
+        pass1Map.put(set, minCostSingleAccess(tableNameReal));
+      }
+
+      Map<Set, QueryOperator> passNMap = pass1Map;
+      for (int i = 1; i < joinTableNames.size() + 1; i++) {
+        passNMap = minCostJoins(passNMap, pass1Map);
+      }
+
+      QueryOperator minCostOp;
+      List<Set> tables = new ArrayList<Set> (passNMap.keySet());
+      minCostOp = passNMap.get(tables.get(0));
+      int minCost = minCostOp.estimateIOCost();
+
+      for (Set set : passNMap.keySet()) {
+        QueryOperator currOp = passNMap.get(set);
+        int currCost = currOp.estimateIOCost();
+        if (currCost < minCost) {
+          minCostOp = currOp;
+          minCost = currCost;
+        }
+      }
+      finalOperator = minCostOp;
+
+      addGroupBy();
+      addProjects();
+      return this.finalOperator.execute();
+
+
         // TODO(proj3_part2): implement
 
         // Pass 1: Iterate through all single tables. For each single table, find
@@ -239,7 +277,7 @@ public class QueryPlan {
         // Get the lowest cost operator from the last pass, add GROUP BY and SELECT
         // operators, and return an iterator on the final operator
 
-        return this.executeNaive(); // TODO(proj3_part2): Replace this!!! Allows you to test intermediate functionality
+        //return this.executeNaive(); // TODO(proj3_part2): Replace this!!! Allows you to test intermediate functionality
     }
 
     /**
@@ -326,8 +364,6 @@ public class QueryPlan {
      * pushed down select operators
      */
     QueryOperator minCostSingleAccess(String table) {
-        QueryOperator minOp = null;
-
         // Find the cost of a sequential scan of the table
         // minOp = new SequentialScanOperator(this.transaction, table);
 
@@ -340,8 +376,26 @@ public class QueryPlan {
 
         // 3. Push down SELECT predicates that apply to this table and that were not
         // used for an index scan
-
-        return minOp;
+        QueryOperator minOp = new SequentialScanOperator(this.transaction, table);
+        int minCost = minOp.estimateIOCost();
+        int indexScanIdx = -1;
+        List<Integer> eligibleIdxCols = getEligibleIndexColumns(table);
+        for (int i = 0; i < eligibleIdxCols.size(); i++) {
+          int selectIdx = eligibleIdxCols.get(i);
+          IndexScanOperator indexOp = new IndexScanOperator(
+             transaction,
+             table,
+             selectColumnNames.get(selectIdx),
+             selectOperators.get(selectIdx),
+             selectDataBoxes.get(selectIdx));
+          int cost = indexOp.estimateIOCost();
+          if (cost < minCost) {
+            minOp = indexOp;
+            minCost = cost;
+            indexScanIdx = i;
+          }
+        }
+        return addEligibleSelections(minOp, indexScanIdx);
     }
 
     /**
@@ -386,6 +440,40 @@ public class QueryPlan {
     Map<Set, QueryOperator> minCostJoins(Map<Set, QueryOperator> prevMap,
                                          Map<Set, QueryOperator> pass1Map) {
         Map<Set, QueryOperator> map = new HashMap<>();
+
+        for (Set tables : prevMap.keySet()) {
+          QueryOperator thisOp = prevMap.get(tables);
+          for (int i = 0; i < joinTableNames.size(); i++) {
+            QueryOperator rightOperator;
+            QueryOperator leftOperator;
+            String rightColumn = getJoinRightColumnNameByIndex(i)[1];
+            String leftColumn = getJoinLeftColumnNameByIndex(i)[1];
+            String rightTableName = getJoinRightColumnNameByIndex(i)[0];
+            String leftTableName = getJoinLeftColumnNameByIndex(i)[0];
+            Set<String> newTableSet = new HashSet<String>();
+
+            if (tables.contains(leftTableName) && !tables.contains(rightTableName)) {
+              newTableSet.add(rightTableName);
+              rightOperator = pass1Map.get(newTableSet);
+              leftOperator = thisOp;
+            } else if (tables.contains(rightTableName) && !tables.contains(leftTableName)) {
+              newTableSet.add(leftTableName);
+              rightOperator = thisOp;
+              leftOperator = pass1Map.get(newTableSet);
+            } else {
+              continue;
+            }
+
+            QueryOperator newOp = minCostJoinType(leftOperator, rightOperator, leftColumn, rightColumn);
+            Set<String> fullSet = new HashSet<String>();
+            fullSet.addAll(newTableSet);
+            fullSet.addAll(tables);
+
+            if (!map.containsKey(fullSet) || (map.get(fullSet).estimateIOCost() > newOp.estimateIOCost())) {
+              map.put(fullSet, newOp);
+            }
+          }
+        }
 
         // TODO(proj3_part2): implement
 
