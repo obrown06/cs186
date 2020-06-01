@@ -20,9 +20,21 @@ public enum LockType {
         if (a == null || b == null) {
             throw new NullPointerException("null lock type");
         }
-        // TODO(proj4_part1): implement
-
-        return false;
+        switch (a) {
+          case NL:
+            return true;
+          case X:
+            return b == NL;
+          case S:
+            return b == IS || b == S || b == NL;
+          case IS:
+            return b == IS || b == IX || b == S || b == SIX || b == NL;
+          case IX:
+            return b == IS || b == IX || b == NL;
+          case SIX:
+            return b == IS || b == NL;
+          default: throw new UnsupportedOperationException("bad lock type");
+        }
     }
 
     /**
@@ -52,9 +64,19 @@ public enum LockType {
         if (parentLockType == null || childLockType == null) {
             throw new NullPointerException("null lock type");
         }
-        // TODO(proj4_part1): implement
-
-        return false;
+        switch (childLockType) {
+          case NL:
+            return true;
+          case S:
+          case IS:
+            return parentLockType == IS || parentLockType == IX;
+          case X:
+          case IX:
+            return parentLockType == IX || parentLockType == SIX;
+          case SIX:
+            return parentLockType == IX;
+          default: throw new UnsupportedOperationException("bad lock type");
+        }
     }
 
     /**
@@ -67,9 +89,24 @@ public enum LockType {
         if (required == null || substitute == null) {
             throw new NullPointerException("null lock type");
         }
-        // TODO(proj4_part1): implement
-
-        return false;
+        if (substitute == required) {
+          return true;
+        }
+        switch (required) {
+          case X:
+            return false;
+          case NL:
+            return true;
+          case S:
+            return substitute == X || substitute == SIX;
+          case IS:
+            return substitute == IX;
+          case IX:
+            return substitute == SIX;
+          case SIX:
+            return false;
+          default: throw new UnsupportedOperationException("bad lock type");
+        }
     }
 
     @Override
@@ -85,4 +122,3 @@ public enum LockType {
         }
     }
 }
-
