@@ -80,16 +80,14 @@ public class LockManager {
          * Updates lock on resource if the transaction already has a lock.
          */
         void grantOrUpdateLock(Lock lock) {
-          boolean lockUpdated = false;
           for (int i = 0; i < locks.size(); i++) {
             if (locks.get(i).transactionNum == lock.transactionNum) {
               transactionLocks.get(lock.transactionNum).remove(locks.get(i));
-              locks.set(i, lock);
-              lockUpdated = true;
+              locks.remove(i);
             }
           }
-          if (!lockUpdated) {
-            locks.add(lock);
+          locks.add(lock);
+          if (!transactionLocks.containsKey(lock.transactionNum)) {
             transactionLocks.put(lock.transactionNum, new ArrayList<Lock>());
           }
           transactionLocks.get(lock.transactionNum).add(lock);
