@@ -204,7 +204,6 @@ public class TestLockContext {
 
         runner.joinAll();
     }
-/*
     @Test
     @Category(PublicTests.class)
     public void testSimplePromote() {
@@ -213,7 +212,7 @@ public class TestLockContext {
         dbLockContext.promote(t1, LockType.X);
         assertTrue(TestLockManager.holds(lockManager, t1, dbLockContext.getResourceName(), LockType.X));
     }
-
+/*
     @Test
     @Category(PublicTests.class)
     public void testEscalateFail() {

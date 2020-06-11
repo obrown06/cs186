@@ -98,23 +98,18 @@ public class LockContext {
         if (readonly) {
           throw new UnsupportedOperationException("This context is readonly!");
         }
-        LockContext ancestor = this.parent;
-        while (ancestor != null) {
-          if (!LockType.canBeParentLock(ancestor.getExplicitLockType(transaction), lockType)) {
-            throw new InvalidLockException("Parent doesn't hold required lock!");
-          }
-          ancestor = ancestor.parent;
+        if (parent != null && !LockType.canBeParentLock(parent.getExplicitLockType(transaction), lockType)) {
+          throw new InvalidLockException("Parent doesn't hold required lock!");
         }
         if (hasSIXAncestor(transaction) && (lockType == LockType.S ||
                                             lockType == LockType.IS)) {
           throw new InvalidLockException("It's not legal to hold an S/IS lock if ancestor holds SIX!");
         }
         lockman.acquire(transaction, name, lockType);
-        ancestor = this.parent;
+        LockContext ancestor = this.parent;
         while (ancestor != null) {
-          ancestor.numChildLocks.put(transaction.getTransNum(),
-            ancestor.numChildLocks.getOrDefault(transaction.getTransNum(), 0) + 1);
-            ancestor = ancestor.parent;
+          ancestor.updateNumChildLocks(transaction, 1);
+          ancestor = ancestor.parent;
         }
     }
 
@@ -144,8 +139,11 @@ public class LockContext {
         }
       }
       lockman.release(transaction, name);
-      this.numChildLocks.put(transaction.getTransNum(),
-        this.numChildLocks.getOrDefault(transaction.getTransNum(), 0) + 1);
+      LockContext ancestor = this.parent;
+      while (ancestor != null) {
+        ancestor.updateNumChildLocks(transaction, -1);
+        ancestor = ancestor.parent;
+      }
     }
 
     /**
@@ -167,9 +165,48 @@ public class LockContext {
      */
     public void promote(TransactionContext transaction, LockType newLockType)
     throws DuplicateLockRequestException, NoLockHeldException, InvalidLockException {
-        // TODO(proj4_part2): implement
+      if (this.readonly) {
+        throw new UnsupportedOperationException("promote of LockContext");
+      }
+      LockType heldLockType = lockman.getLockType(transaction, name);
+      if (heldLockType == LockType.NL) {
+        throw new NoLockHeldException("No lock is held!");
+      }
 
+      if (!newLockType.equals(LockType.SIX)) {
+        lockman.promote(transaction, name, newLockType);
         return;
+      }
+
+      if (hasSIXAncestor(transaction)) {
+          throw new InvalidLockException("Redundant promotion to SIX!");
+      }
+
+      if (!(heldLockType.equals(LockType.S) || heldLockType.equals(LockType.IS) || heldLockType.equals(LockType.IX))) {
+        throw new InvalidLockException("Illegal promotion to SIX!");
+      }
+      List<ResourceName> releaseResources = this.sisDescendants(transaction);
+      this.decrementLockCountForSisDescendants(transaction);
+      releaseResources.add(name);
+      this.lockman.acquireAndRelease(transaction, name, newLockType, releaseResources);
+    }
+
+    private int decrementLockCountForSisDescendants(TransactionContext transaction) { // DFS
+      int nSisDescendants = 0;
+      for (LockContext descendantContext : this.children.values()) {
+        nSisDescendants += descendantContext.decrementLockCountForSisDescendants(transaction);
+      }
+      this.updateNumChildLocks(transaction, 0 - nSisDescendants);
+      LockType lockType = lockman.getLockType(transaction, name);
+      if (lockType == LockType.S || lockType == LockType.IS) {
+        nSisDescendants++;
+      }
+      return nSisDescendants;
+    }
+
+    private void updateNumChildLocks(TransactionContext transaction, int delta) {
+      this.numChildLocks.put(transaction.getTransNum(),
+        this.numChildLocks.getOrDefault(transaction.getTransNum(), 0) + delta);
     }
 
     /**
