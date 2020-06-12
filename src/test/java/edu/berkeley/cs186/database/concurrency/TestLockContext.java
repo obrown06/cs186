@@ -212,7 +212,7 @@ public class TestLockContext {
         dbLockContext.promote(t1, LockType.X);
         assertTrue(TestLockManager.holds(lockManager, t1, dbLockContext.getResourceName(), LockType.X));
     }
-/*
+
     @Test
     @Category(PublicTests.class)
     public void testEscalateFail() {
@@ -393,6 +393,6 @@ public class TestLockContext {
         dbLockContext.escalate(t1);
         assertEquals(0.0, dbLockContext.saturation(t1), 1E-6);
     }
-    */
+
 
 }

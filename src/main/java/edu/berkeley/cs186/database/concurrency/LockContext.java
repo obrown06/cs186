@@ -126,12 +126,12 @@ public class LockContext {
      */
     public void release(TransactionContext transaction)
     throws NoLockHeldException, InvalidLockException {
+      if (this.readonly) {
+        throw new UnsupportedOperationException("promote of LockContext");
+      }
       LockType heldLockType = lockman.getLockType(transaction, name);
       if (heldLockType == LockType.NL) {
         throw new NoLockHeldException("No lock is held!");
-      }
-      if (readonly) {
-        throw new UnsupportedOperationException("Context is readonly!");
       }
       for (LockContext child : this.children.values()) {
         if (lockman.getLockType(transaction, child.name) != LockType.NL) {
@@ -230,11 +230,53 @@ public class LockContext {
      * @throws NoLockHeldException if TRANSACTION has no lock at this level
      * @throws UnsupportedOperationException if context is readonly
      */
-    public void escalate(TransactionContext transaction) throws NoLockHeldException {
-        // TODO(proj4_part2): implement
+     public void escalate(TransactionContext transaction) throws NoLockHeldException {
+         // TODO(proj4_part2): implement
+         if (this.readonly) {
+           throw new UnsupportedOperationException("Context is readonly!");
+         }
+         LockType heldLockType = lockman.getLockType(transaction, name);
+         if (heldLockType == LockType.NL) {
+           throw new NoLockHeldException("No lock is held!");
+         }
 
-        return;
-    }
+         List<Pair<ResourceName, LockType>> descendantLockTypes = getAllDescendantLockTypes(transaction);
+         List<ResourceName> resourcesToRelease = new ArrayList<ResourceName>();
+         LockType lockTypeToEscalate = descendantLockTypes.get(0).getSecond();
+         for (Pair<ResourceName, LockType> kv : descendantLockTypes) {
+           if (kv.getSecond() == LockType.NL) {
+             continue;
+           }
+           resourcesToRelease.add(kv.getFirst());
+           if (kv.getSecond() == LockType.X || kv.getSecond() == LockType.IX || kv.getSecond() == LockType.SIX) {
+             lockTypeToEscalate = LockType.X;
+           } else if (lockTypeToEscalate != LockType.X) {
+             lockTypeToEscalate = LockType.S;
+           }
+         }
+         if (lockTypeToEscalate == heldLockType || !(lockTypeToEscalate.equals(LockType.S) || lockTypeToEscalate.equals(LockType.X))) {
+           return;
+         }
+
+         this.lockman.acquireAndRelease(transaction, name, lockTypeToEscalate, resourcesToRelease);
+         setAllDescendantChildLockCountsToZero(transaction);
+     }
+
+     private void setAllDescendantChildLockCountsToZero(TransactionContext transaction) {
+       this.numChildLocks.put(transaction.getTransNum(), 0);
+       for (LockContext descendantContext : this.children.values()) {
+         descendantContext.setAllDescendantChildLockCountsToZero(transaction);
+       }
+     }
+
+     private List<Pair<ResourceName, LockType>> getAllDescendantLockTypes(TransactionContext transaction) {
+       List<Pair<ResourceName, LockType>> lockTypes = new ArrayList<>();
+       lockTypes.add(new Pair<ResourceName, LockType>(name, lockman.getLockType(transaction, name)));
+       for (LockContext descendantContext : this.children.values()) {
+         lockTypes.addAll(descendantContext.getAllDescendantLockTypes(transaction));
+       }
+       return lockTypes;
+     }
 
     /**
      * Gets the type of lock that the transaction has at this level, either implicitly
@@ -245,8 +287,21 @@ public class LockContext {
         if (transaction == null) {
             return LockType.NL;
         }
-        // TODO(proj4_part2): implement
-        return LockType.NL;
+        LockType effectiveLockType = lockman.getLockType(transaction, name);
+        if (effectiveLockType == LockType.X) {
+          return effectiveLockType;
+        }
+        LockContext ancestor = this.parent;
+        while (ancestor != null) {
+          LockType ancestorLockType = lockman.getLockType(transaction, ancestor.name);
+          if (ancestorLockType == LockType.X) {
+            return ancestorLockType;
+          } else if (ancestorLockType == LockType.S || ancestorLockType == LockType.SIX) {
+            effectiveLockType = ancestorLockType;
+          }
+          ancestor = ancestor.parent;
+        }
+        return effectiveLockType == LockType.SIX ? LockType.S : effectiveLockType;
     }
 
     /**
