@@ -22,8 +22,88 @@ public class LockUtil {
         // TODO(proj4_part2): implement
 
         TransactionContext transaction = TransactionContext.getTransaction(); // current transaction
+        if (transaction == null || lockType == LockType.NL) {
+          return;
+        }
 
+        if (LockType.substitutable(lockContext.getEffectiveLockType(transaction), lockType)) {
+          return;
+        }
+
+        acquireLocksOnAncestors(LockType.parentLock(lockType), lockContext.parentContext(), transaction);
+        acquireLock(lockContext, lockType, transaction);
+    }
+
+    private static void acquireLocksOnAncestors(LockType lockToAcquire,
+                                                LockContext ancestor,
+                                                TransactionContext transaction) {
+      if (ancestor == null ||
+          LockType.substitutable(ancestor.getEffectiveLockType(transaction), lockToAcquire)) {
         return;
+      }
+      LockType currLockType = ancestor.getExplicitLockType(transaction);
+      lockToAcquire = resolveLockTypeToAcquire(lockToAcquire, currLockType);
+      acquireLocksOnAncestors(LockType.parentLock(lockToAcquire), ancestor.parentContext(), transaction);
+      acquireOrPromote(ancestor, currLockType, lockToAcquire, transaction);
+    }
+
+    private static LockType resolveLockTypeToAcquire(LockType lockTypeToAcquire, LockType heldLockType) {
+      if ((lockTypeToAcquire == LockType.S && heldLockType == LockType.IX) ||
+          (lockTypeToAcquire == LockType.IX && heldLockType == LockType.S)) {
+            return LockType.SIX;
+          }
+      return lockTypeToAcquire;
+    }
+
+    private static void acquireLock(LockContext lockContext,
+                                    LockType lockToAcquire,
+                                    TransactionContext transaction) {
+      LockType currLockType = lockContext.getExplicitLockType(transaction);
+      lockToAcquire = resolveLockTypeToAcquire(lockToAcquire, currLockType);
+      if (canEscalate(lockToAcquire, currLockType)) {
+        blockingEscalate(lockContext, transaction);
+      } else {
+        acquireOrPromote(lockContext, currLockType, lockToAcquire, transaction);
+      }
+    }
+
+    private static boolean canEscalate(LockType lockTypeToAcquire, LockType heldLockType) {
+      if (lockTypeToAcquire == LockType.SIX && heldLockType == LockType.IX) {
+        return false;
+      }
+      return LockType.canBeParentLock(heldLockType, lockTypeToAcquire);
+    }
+
+    private static void acquireOrPromote(LockContext lockContext,
+                                  LockType currLockType,
+                                  LockType lockToAcquire,
+                                  TransactionContext transaction) {
+      if (currLockType == LockType.NL) {
+        blockingAcquire(lockContext, lockToAcquire, transaction);
+      } else {
+        blockingPromote(lockContext, lockToAcquire, transaction);
+      }
+    }
+
+    private static void blockingAcquire(LockContext lockContext, LockType lockType, TransactionContext transaction) {
+      lockContext.acquire(transaction, lockType);
+      while(transaction.getBlocked()) {
+        continue;
+      }
+    }
+
+    private static void blockingPromote(LockContext lockContext, LockType lockType, TransactionContext transaction) {
+      lockContext.promote(transaction, lockType);
+      while(transaction.getBlocked()) {
+        continue;
+      }
+    }
+
+    private static void blockingEscalate(LockContext lockContext, TransactionContext transaction) {
+      lockContext.escalate(transaction);
+      while(transaction.getBlocked()) {
+        continue;
+      }
     }
 
     // TODO(proj4_part2): add helper methods as you see fit
