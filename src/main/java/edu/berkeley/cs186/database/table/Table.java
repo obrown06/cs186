@@ -319,6 +319,7 @@ public class Table implements BacktrackingIterable<Record> {
         Record newRecord = schema.verify(values);
         Record oldRecord = getRecord(rid);
 
+        LockUtil.ensureSufficientLockHeld(lockContext.childContext(rid.getPageNum()), LockType.X);
         Page page = fetchPage(rid.getPageNum());
         try {
             insertRecord(page, rid.getEntryNum(), newRecord);
@@ -339,8 +340,11 @@ public class Table implements BacktrackingIterable<Record> {
     public synchronized Record deleteRecord(RecordId rid) {
         // TODO(proj4_part3): modify for smarter locking
 
+        System.out.println("[nickbrow] Starting to delete record!");
         validateRecordId(rid);
 
+        LockUtil.ensureSufficientLockHeld(lockContext.childContext(rid.getPageNum()), LockType.X);
+        System.out.println("[nickbrow] Got lock");
         Page page = fetchPage(rid.getPageNum());
         try {
             Record record = getRecord(rid);
@@ -358,6 +362,7 @@ public class Table implements BacktrackingIterable<Record> {
             return record;
         } finally {
             page.unpin();
+            System.out.println("[nickbrow] Done deleting record!");
         }
     }
 
@@ -572,4 +577,3 @@ public class Table implements BacktrackingIterable<Record> {
         }
     }
 }
-

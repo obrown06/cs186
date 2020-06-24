@@ -246,7 +246,7 @@ public class LockManager {
         synchronized (this) {
           Lock lock = new Lock(name, lockType, transaction.getTransNum());
           ResourceEntry entry = getResourceEntry(name);
-          if (entry.getTransactionLockType(transaction.getTransNum()) == lockType) {
+          if (entry.getTransactionLockType(transaction.getTransNum()) != LockType.NL) {
             throw new DuplicateLockRequestException("Acquiring duplicate lock is illegal!");
           }
           if (entry.waitingQueue.isEmpty() &&
