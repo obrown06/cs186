@@ -165,7 +165,7 @@ public class ARIESRecoveryManager implements RecoveryManager {
         assert (transactionEntry != null);
 
         if (transactionEntry.transaction.getStatus() == Transaction.Status.ABORTING) {
-          undoAllRecordsForTransaction(transactionEntry);
+          undoRecordsForTransaction(transactionEntry, -1);
         }
         transactionTable.remove(transNum);
         transactionEntry.transaction.setStatus(Transaction.Status.COMPLETE);
@@ -222,9 +222,36 @@ public class ARIESRecoveryManager implements RecoveryManager {
     public long logPageWrite(long transNum, long pageNum, short pageOffset, byte[] before,
                              byte[] after) {
         assert (before.length == after.length);
+        TransactionTableEntry transactionEntry = transactionTable.get(transNum);
+        long lastRecordLSN = -1;
+        if (before.length <= BufferManager.EFFECTIVE_PAGE_SIZE / 2) {
+          lastRecordLSN = logManager.appendToLog(new UpdatePageLogRecord(transNum,
+                                                     pageNum,
+                                                     transactionEntry.lastLSN,
+                                                     pageOffset,
+                                                     before,
+                                                     after));
+        } else {
+          lastRecordLSN = logManager.appendToLog(new UpdatePageLogRecord(transNum,
+                                                     pageNum,
+                                                     transactionEntry.lastLSN,
+                                                     pageOffset,
+                                                     before,
+                                                     null));
+          lastRecordLSN = logManager.appendToLog(new UpdatePageLogRecord(transNum,
+                                                    pageNum,
+                                                    lastRecordLSN,
+                                                    pageOffset,
+                                                    null,
+                                                    after));
+        }
 
-        // TODO(proj5): implement
-        return -1L;
+        if (!dirtyPageTable.containsKey(pageNum)) {
+          dirtyPageTable.put(pageNum, lastRecordLSN);
+        }
+        transactionEntry.lastLSN = lastRecordLSN;
+        transactionEntry.touchedPages.add(pageNum);
+        return lastRecordLSN;
     }
 
     /**
@@ -411,8 +438,7 @@ public class ARIESRecoveryManager implements RecoveryManager {
 
         // All of the transaction's changes strictly after the record at LSN should be undone.
         long LSN = transactionEntry.getSavepoint(name);
-
-        // TODO(proj5): implement
+        undoRecordsForTransaction(transactionEntry, LSN);
         return;
     }
 
@@ -441,6 +467,30 @@ public class ARIESRecoveryManager implements RecoveryManager {
         int numTouchedPages = 0;
 
         // TODO(proj5): generate end checkpoint record(s) for DPT and transaction table
+
+        for (Map.Entry<Long, Long> page : dirtyPageTable.entrySet()) {
+          long transNum = page.getKey();
+          boolean fitsAfterAdd = EndCheckpointLogRecord.fitsInOneRecord(dpt.size() + 1, 0, 0, 0);
+          if (!fitsAfterAdd) {
+            LogRecord endRecord = new EndCheckpointLogRecord(dpt, txnTable, touchedPages);
+            logManager.appendToLog(endRecord);
+            dpt.clear();
+          }
+
+          dpt.put(page.getKey(), page.getValue());
+        }
+
+        for (Map.Entry<Long, TransactionTableEntry> entry : transactionTable.entrySet()) {
+          long transNum = entry.getKey();
+          boolean fitsAfterAdd = EndCheckpointLogRecord.fitsInOneRecord(dpt.size(), txnTable.size() + 1, 0, 0);
+          if (!fitsAfterAdd) {
+            LogRecord endRecord = new EndCheckpointLogRecord(dpt, txnTable, touchedPages);
+            logManager.appendToLog(endRecord);
+            dpt.clear();
+            txnTable.clear();
+          }
+          txnTable.put(transNum, new Pair<Transaction.Status, Long>(entry.getValue().transaction.getStatus(), entry.getValue().lastLSN));
+        }
 
         for (Map.Entry<Long, TransactionTableEntry> entry : transactionTable.entrySet()) {
             long transNum = entry.getKey();
@@ -590,7 +640,7 @@ public class ARIESRecoveryManager implements RecoveryManager {
 
     // Helpers ///////////////////////////////////////////////////////////////////////////////
 
-    private void undoAllRecordsForTransaction(TransactionTableEntry entry) {
+    private void undoRecordsForTransaction(TransactionTableEntry entry, long until) {
     	LogRecord recordToUndo = logManager.fetchLogRecord(entry.lastLSN);
 		  while(true) {
 			  if (recordToUndo.isUndoable()) {
@@ -601,11 +651,10 @@ public class ARIESRecoveryManager implements RecoveryManager {
           }
           clr.getFirst().redo(diskSpaceManager, bufferManager);
 			  }
-			  if (recordToUndo.getPrevLSN().isPresent()) {
-			  	recordToUndo = logManager.fetchLogRecord(recordToUndo.getPrevLSN().get());
-			  } else {
-			  	break;
-			  }
+        if (!recordToUndo.getPrevLSN().isPresent() || recordToUndo.getPrevLSN().get() < until) {
+          break;
+        }
+			  recordToUndo = logManager.fetchLogRecord(recordToUndo.getPrevLSN().get());
 		  }
     }
 
