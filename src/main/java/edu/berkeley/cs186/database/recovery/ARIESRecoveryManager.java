@@ -111,7 +111,17 @@ public class ARIESRecoveryManager implements RecoveryManager {
     @Override
     public long commit(long transNum) {
         // TODO(proj5): implement
-        return -1L;
+        TransactionTableEntry transactionEntry = transactionTable.get(transNum);
+        assert (transactionEntry != null);
+
+        transactionEntry.transaction.setStatus(Transaction.Status.COMMITTING);
+        LogRecord record = new CommitTransactionLogRecord(transNum, transactionEntry.lastLSN);
+        long LSN = logManager.appendToLog(record);
+        // Update lastLSN
+        transactionEntry.lastLSN = record.getLSN();
+        // Flush log
+        logManager.flushToLSN(record.getLSN());
+        return record.getLSN();
     }
 
     /**
@@ -126,7 +136,15 @@ public class ARIESRecoveryManager implements RecoveryManager {
     @Override
     public long abort(long transNum) {
         // TODO(proj5): implement
-        return -1L;
+        TransactionTableEntry transactionEntry = transactionTable.get(transNum);
+        assert (transactionEntry != null);
+
+        transactionEntry.transaction.setStatus(Transaction.Status.ABORTING);
+        LogRecord record = new AbortTransactionLogRecord(transNum, transactionEntry.lastLSN);
+        long LSN = logManager.appendToLog(record);
+        // Update lastLSN
+        transactionEntry.lastLSN = LSN;
+        return LSN;
     }
 
     /**
@@ -143,7 +161,16 @@ public class ARIESRecoveryManager implements RecoveryManager {
     @Override
     public long end(long transNum) {
         // TODO(proj5): implement
-        return -1L;
+        TransactionTableEntry transactionEntry = transactionTable.get(transNum);
+        assert (transactionEntry != null);
+
+        if (transactionEntry.transaction.getStatus() == Transaction.Status.ABORTING) {
+          undoAllRecordsForTransaction(transactionEntry);
+        }
+        transactionTable.remove(transNum);
+        transactionEntry.transaction.setStatus(Transaction.Status.COMPLETE);
+        LogRecord record = new EndTransactionLogRecord(transNum, transactionEntry.lastLSN);
+        return logManager.appendToLog(record);
     }
 
     /**
@@ -562,6 +589,25 @@ public class ARIESRecoveryManager implements RecoveryManager {
     // TODO(proj5): add any helper methods needed
 
     // Helpers ///////////////////////////////////////////////////////////////////////////////
+
+    private void undoAllRecordsForTransaction(TransactionTableEntry entry) {
+    	LogRecord recordToUndo = logManager.fetchLogRecord(entry.lastLSN);
+		  while(true) {
+			  if (recordToUndo.isUndoable()) {
+			  	Pair<LogRecord, Boolean> clr = recordToUndo.undo(recordToUndo.getLSN());
+          logManager.appendToLog(clr.getFirst());
+          if (clr.getSecond()) {
+            logManager.flushToLSN(clr.getFirst().getLSN());
+          }
+          clr.getFirst().redo(diskSpaceManager, bufferManager);
+			  }
+			  if (recordToUndo.getPrevLSN().isPresent()) {
+			  	recordToUndo = logManager.fetchLogRecord(recordToUndo.getPrevLSN().get());
+			  } else {
+			  	break;
+			  }
+		  }
+    }
 
     /**
      * Returns the lock context for a given page number.
