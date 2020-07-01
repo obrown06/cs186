@@ -601,6 +601,65 @@ public class ARIESRecoveryManager implements RecoveryManager {
         // Get start checkpoint LSN
         long LSN = masterRecord.lastCheckpointLSN;
 
+        Iterator<LogRecord> recordsIter = logManager.scanFrom(LSN);
+
+        while (recordsIter.hasNext()) {
+          record = recordsIter.next();
+          switch (record.getType()) {
+            case BEGIN_CHECKPOINT:
+              updateTransactionCounter.accept(getTransactionCounter.get() + 1);
+              break;
+            case END_CHECKPOINT:
+              // Update Dirty Page Table
+              for (Map.Entry<Long, Long> checkpointEntry : record.getDirtyPageTable().entrySet()) {
+                dirtyPageTable.put(checkpointEntry.getKey(), checkpointEntry.getValue());
+              }
+
+              // Update Transaction Table
+              for (Map.Entry<Long, Pair<Transaction.Status, Long>> checkpointEntry : record.getTransactionTable().entrySet()) {
+                TransactionTableEntry entry = transactionTable.get(checkpointEntry.getKey());
+                entry.lastLSN = Math.max(entry.lastLSN, checkpointEntry.getValue().getSecond());
+              }
+
+              for (Map.Entry<Long, List<Long>> checkpointEntry : record.getTransactionTouchedPages().entrySet()) {
+                TransactionTableEntry entry = transactionTable.get(checkpointEntry.getKey());
+                if (entry.transaction.getStatus() != Transaction.Status.COMPLETE) {
+                  for (Long pageNum : checkpointEntry.getValue()) {
+                    entry.touchedPages.add(pageNum);
+                    this.acquireTransactionLock(entry.transaction, getPageLockContext(pageNum), LockType.X);
+                  }
+                }
+              }
+              break;
+            case COMMIT_TRANSACTION:
+              Optional<Long> transNum = record.getTransNum();
+              if (!transactionTable.containsKey(transNum.get())) {
+                transactionTable.put(transNum.get(), new TransactionTableEntry(newTransaction.apply(transNum.get())));
+              }
+              transactionTable.get(transNum.get()).lastLSN = record.getLSN();
+              transactionTable.get(transNum.get()).transaction.setStatus(Transaction.Status.COMMITTING);
+              break;
+            case ABORT_TRANSACTION:
+              transNum = record.getTransNum();
+              if (!transactionTable.containsKey(transNum.get())) {
+                transactionTable.put(transNum.get(), new TransactionTableEntry(newTransaction.apply(transNum.get())));
+              }
+              transactionTable.get(transNum.get()).lastLSN = record.getLSN();
+              transactionTable.get(transNum.get()).transaction.setStatus(Transaction.Status.RECOVERY_ABORTING);
+              break;
+            case END_TRANSACTION:
+              transNum = record.getTransNum();
+              if (!transactionTable.containsKey(transNum.get())) {
+                transactionTable.put(transNum.get(), new TransactionTableEntry(newTransaction.apply(transNum.get())));
+              }
+              transactionTable.get(transNum.get()).lastLSN = record.getLSN();
+              transactionTable.get(transNum.get()).transaction.cleanup();
+              transactionTable.get(transNum.get()).transaction.setStatus(Transaction.Status.COMPLETE);
+              transactionTable.remove(transNum.get());
+              break;
+          }
+        }
+
         // TODO(proj5): implement
         return;
     }
