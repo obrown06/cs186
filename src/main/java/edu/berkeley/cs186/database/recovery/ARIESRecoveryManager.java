@@ -607,7 +607,8 @@ public class ARIESRecoveryManager implements RecoveryManager {
           record = recordsIter.next();
           switch (record.getType()) {
             case BEGIN_CHECKPOINT:
-              updateTransactionCounter.accept(getTransactionCounter.get() + 1);
+              long maxTransNumber = Math.max(getTransactionCounter.get(), record.getMaxTransactionNum().get());
+              updateTransactionCounter.accept(maxTransNumber);
               break;
             case END_CHECKPOINT:
               // Update Dirty Page Table
@@ -657,10 +658,51 @@ public class ARIESRecoveryManager implements RecoveryManager {
               transactionTable.get(transNum.get()).transaction.setStatus(Transaction.Status.COMPLETE);
               transactionTable.remove(transNum.get());
               break;
+            case UPDATE_PAGE:
+            case UNDO_UPDATE_PAGE:
+              transNum = record.getTransNum();
+              if (!transactionTable.containsKey(transNum.get())) {
+                transactionTable.put(transNum.get(), new TransactionTableEntry(newTransaction.apply(transNum.get())));
+              }
+              TransactionTableEntry entry = transactionTable.get(transNum.get());
+              entry.lastLSN = record.getLSN();
+              entry.touchedPages.add(record.getPageNum().get());
+              acquireTransactionLock(entry.transaction, getPageLockContext(record.getPageNum().get()), LockType.X);
+              this.dirtyPageTable.put(record.getPageNum().get(), record.getLSN());
+              break;
+            case ALLOC_PAGE:
+            case FREE_PAGE:
+            case UNDO_ALLOC_PAGE:
+            case UNDO_FREE_PAGE:
+              transNum = record.getTransNum();
+              if (!transactionTable.containsKey(transNum.get())) {
+                transactionTable.put(transNum.get(), new TransactionTableEntry(newTransaction.apply(transNum.get())));
+              }
+              entry = transactionTable.get(transNum.get());
+              entry.lastLSN = record.getLSN();
+              entry.touchedPages.add(record.getPageNum().get());
+              acquireTransactionLock(entry.transaction, getPageLockContext(record.getPageNum().get()), LockType.X);
+              this.dirtyPageTable.remove(record.getPageNum().get());
           }
         }
 
-        // TODO(proj5): implement
+        for (Map.Entry<Long, TransactionTableEntry> kv : transactionTable.entrySet()) {
+          TransactionTableEntry entry = kv.getValue();
+          switch(entry.transaction.getStatus()) {
+            case COMMITTING:
+              record = new EndTransactionLogRecord(entry.transaction.getTransNum(), entry.lastLSN);
+              logManager.appendToLog(record);
+              entry.transaction.cleanup();
+              entry.transaction.setStatus(Transaction.Status.COMPLETE);
+              transactionTable.remove(kv.getKey());
+              break;
+            case RUNNING:
+              record = new AbortTransactionLogRecord(entry.transaction.getTransNum(), entry.lastLSN);
+              entry.lastLSN = logManager.appendToLog(record);
+              entry.transaction.setStatus(Transaction.Status.RECOVERY_ABORTING);
+              break;
+          }
+        }
         return;
     }
 
