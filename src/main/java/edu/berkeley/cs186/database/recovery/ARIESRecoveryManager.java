@@ -718,7 +718,44 @@ public class ARIESRecoveryManager implements RecoveryManager {
      */
     void restartRedo() {
         // TODO(proj5): implement
-        return;
+        Optional<Long> recLSN = Optional.empty();
+        for (Map.Entry<Long, Long> entry : dirtyPageTable.entrySet()) {
+          if (!recLSN.isPresent() || entry.getValue() < recLSN.get()) {
+            recLSN = Optional.of(entry.getValue());
+          }
+        }
+
+        if (!recLSN.isPresent()) {
+          return;
+        }
+
+        Iterator<LogRecord> iter = this.logManager.scanFrom(recLSN.get());
+        while (iter.hasNext()) {
+          LogRecord record = iter.next();
+          if (!record.isRedoable()) {
+            continue;
+          }
+          if (!record.getPageNum().isPresent()) {
+            record.redo(diskSpaceManager, bufferManager);
+            continue;
+          }
+          long pageNum = record.getPageNum().get();
+          if (dirtyPageTable.containsKey(pageNum) &&
+              record.getLSN() >= dirtyPageTable.get(pageNum)) {
+                Page page = bufferManager.fetchPage(this.getPageLockContext(pageNum).parentContext(),
+                                                         pageNum, false);
+                long pageLSN = Long.MAX_VALUE;
+                try {
+                  pageLSN = page.getPageLSN();
+                } finally {
+                  page.unpin();
+                }
+                if (pageLSN < record.getLSN()) {
+                  record.redo(diskSpaceManager, bufferManager);
+                }
+              }
+
+        }
     }
 
     /**
@@ -734,6 +771,17 @@ public class ARIESRecoveryManager implements RecoveryManager {
      */
     void restartUndo() {
         // TODO(proj5): implement
+        Queue<Long> lsnQ = new PriorityQueue<Long>();
+
+        for (Map.Entry<Long, TransactionTableEntry> entry : transactionTable.entrySet()) {
+          if (entry.getValue().transaction.getStatus() == Transaction.Status.RECOVERY_ABORTING) {
+            lsnQ.add(entry.getValue().lastLSN);
+          }
+        }
+
+        while (!lsnQ.isEmpty()) {
+          long lsn = lsnQ.poll();
+        }
         return;
     }
 
